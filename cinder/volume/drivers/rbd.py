@@ -101,6 +101,21 @@ RBD_OPTS = [
                      "Cinder core code for allocated_capacity_gb. This "
                      "reduces the load on the Ceph cluster as well as on the "
                      "volume service."),
+    cfg.StrOpt('disk_geometry', default='512', choices=['512', '512e', '4k'],
+               help='Configure the reported geometry (physical, logical)'
+                    'block size as 512 native (512/512),'
+                    '512 emulated (4096/512) or 4k native (4096/4096). '
+                    'This hints to the operating system the desired size '
+                    'of I/O updates submitted to the disk. Windows systems '
+                    'send 512b-aligned I/O by default (unlike Linux which '
+                    'typically submits 4k-aligned I/O). Setting this option '
+                    'may allow the operating system to submit a 4k operation '
+                    'instead which will prevent Ceph needing to do an '
+                    'expensive read-modify-write of the smaller operation. '
+                    '512e is the recommended setting but 512 is the default '
+                    'to maintain backwards compatible behaviour. 4k is the '
+                    'ideal setting but may cause compatability issues with '
+                    'some operating system versions.'),
 ]
 
 CONF = cfg.CONF
@@ -487,6 +502,17 @@ class RBDDriver(driver.CloneableImageVD,
             self._update_volume_stats()
         return self._stats
 
+    def _get_geometry(self):
+        """Returns the volume update required for the disk geometry"""
+        if self.configuration.disk_geometry == '512':
+            provider_geometry = '512 512'
+        elif self.configuration.disk_geometry == '512e':
+            provider_geometry = '4096 512'
+        elif self.configuration.disk_geometry == '4k':
+            provider_geometry = '4096 4096'
+
+        return {'provider_geometry': provider_geometry}
+
     def _get_clone_depth(self, client, volume_name, depth=0):
         """Returns the number of ancestral clones of the given volume."""
         parent_volume = self.rbd.Image(client.ioctx, volume_name)
@@ -600,6 +626,8 @@ class RBDDriver(driver.CloneableImageVD,
                        'dst_size': volume.size})
             self._resize(volume)
 
+        volume_update.update(self._get_geometry())
+
         LOG.debug("clone created successfully")
         return volume_update
 
@@ -661,6 +689,11 @@ class RBDDriver(driver.CloneableImageVD,
                 err_msg = (_('Failed to enable image replication'))
                 raise exception.ReplicationError(reason=err_msg,
                                                  volume_id=volume.id)
+
+        if not volume_update:
+            volume_update = {}
+        volume_update.update(self._get_geometry())
+
         return volume_update
 
     def _flatten(self, pool, volume_name):
@@ -695,7 +728,12 @@ class RBDDriver(driver.CloneableImageVD,
                 err_msg = (_('Failed to enable image replication'))
                 raise exception.ReplicationError(reason=err_msg,
                                                  volume_id=volume.id)
-            return volume_update or {}
+
+            if not volume_update:
+                volume_update = {}
+            volume_update.update(self._get_geometry())
+
+            return volume_update
 
     def _resize(self, volume, **kwargs):
         size = kwargs.get('size', None)
@@ -1101,6 +1139,11 @@ class RBDDriver(driver.CloneableImageVD,
                 'volume_id': volume.id,
             }
         }
+        geometry = volume.get('provider_geometry', None)
+        if geometry:
+            (physical_block_size, logical_block_size) = geometry.split()
+            data['data']['physical_block_size'] = physical_block_size
+            data['data']['logical_block_size'] = logical_block_size
         LOG.debug('connection data: %s', data)
         return data
 
