@@ -175,6 +175,7 @@ class RBDTestCase(test.TestCase):
         self.cfg.rbd_store_chunk_size = 4
         self.cfg.rados_connection_retries = 3
         self.cfg.rados_connection_interval = 5
+        self.cfg.disk_geometry = '512e'
 
         mock_exec = mock.Mock()
         mock_exec.return_value = ('', '')
@@ -1249,7 +1250,9 @@ class RBDTestCase(test.TestCase):
                     'auth_username': self.cfg.rbd_user,
                     'secret_type': 'ceph',
                     'secret_uuid': None,
-                    'volume_id': self.volume_a.id
+                    'volume_id': self.volume_a.id,
+                    'logical_block_size': '512',
+                    'physical_block_size': '4096',
                 }
             }
             actual = self.driver.initialize_connection(self.volume_a, None)

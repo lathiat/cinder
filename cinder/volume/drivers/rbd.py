@@ -101,6 +101,20 @@ RBD_OPTS = [
                      "Cinder core code for allocated_capacity_gb. This "
                      "reduces the load on the Ceph cluster as well as on the "
                      "volume service."),
+    cfg.StrOpt('disk_geometry', default='512e', choices=['512', '512e', '4k'],
+               help='Configure the reported geometry (physical, logical) '
+                    'block size as 512 native (512/512), '
+                    '512e emulated (4096/512) or 4k native (4096/4096). '
+                    'This hints to the operating system the desired size '
+                    'of I/O updates submitted to the disk. Windows systems '
+                    'send 512b-aligned I/O by default (unlike Linux which '
+                    'typically submits 4k-aligned I/O). Setting this option '
+                    'to 512e may allow the operating system to submit a 4k '
+                    'operation instead which will prevent Ceph needing to do '
+                    'an expensive read-modify-write of the smaller operation. '
+                    '512e is the recommended setting as 4k native can cause '
+                    'compatability issues with some software and operating '
+                    'system versions according to Microsoft KB 2510009.'),
 ]
 
 CONF = cfg.CONF
@@ -1084,6 +1098,20 @@ class RBDDriver(driver.CloneableImageVD,
         """Removes an export for a logical volume."""
         pass
 
+    def _get_geometry(self):
+        """Returns the volume update required for the disk geometry"""
+        if self.configuration.disk_geometry == '512':
+            provider_geometry = {'physical_block_size': '512',
+                                 'logical_block_size': '512'}
+        elif self.configuration.disk_geometry == '512e':
+            provider_geometry = {'physical_block_size': '4096',
+                                 'logical_block_size': '512'}
+        elif self.configuration.disk_geometry == '4k':
+            provider_geometry = {'physical_block_size': '4096',
+                                 'logical_block_size': '4096'}
+
+        return provider_geometry
+
     def initialize_connection(self, volume, connector):
         hosts, ports = self._get_mon_addrs()
         data = {
@@ -1101,6 +1129,9 @@ class RBDDriver(driver.CloneableImageVD,
                 'volume_id': volume.id,
             }
         }
+        geometry = self._get_geometry()
+        if geometry:
+            data['data'].update(geometry)
         LOG.debug('connection data: %s', data)
         return data
 
